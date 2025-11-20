@@ -1,50 +1,65 @@
 """
-MCP 聚合管理器 - 完全兼容 Streamable MCP
+MCPHub - Streamable MCP 智能枢纽
 
-特性:
-1. 多 MCP 服务器聚合
-2. 自动发现工具
-3. 路由工具调用
-4. 支持 Streamable MCP 流式输出
-5. 健康检查与客户端管理
+🚀 你的MCP服务器智能管理中心
+
+核心能力:
+1. 🔗 多MCP服务器统一接入
+2. 🎯 智能工具发现与路由
+3. ⚡ 流式输出支持
+4. 💓 实时健康监控
+5. 🔧 动态配置管理
+
+就像MCP世界的交通枢纽，让所有服务器无缝协作！
 """
 
-import asyncio
 import json
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, AsyncGenerator
+import yaml
+from typing import Any, Dict, AsyncGenerator
 
 import httpx
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 
-# ===================== 数据模型 =====================
-@dataclass
-class MCPServerConfig:
-    name: str
-    endpoint: str
-    enabled: bool = True
-    timeout: int = 30
+from model import MCPServerConfig, ToolInfo, MCPServersConfig
 
-@dataclass
-class ToolInfo:
-    name: str
-    server_name: str
-    schema: Dict[str, Any]
 
-    @property
-    def full_name(self):
-        return f"{self.server_name}.{self.name}"
-
-# ===================== MCP 聚合管理器 =====================
-class MCPAggregator:
-    def __init__(self):
+# ===================== MCPHub - 智能枢纽 =====================
+class MCPHub:
+    def __init__(self, config_file: str = None):
         self.servers: Dict[str, MCPServerConfig] = {}
         self.clients: Dict[str, httpx.AsyncClient] = {}
         self.tools: Dict[str, ToolInfo] = {}
         self.health_status: Dict[str, bool] = {}
         self.request_ids: Dict[str, int] = {}
+        
+        if config_file:
+            self.load_config(config_file)
+
+    def load_config(self, config_file: str):
+        """从配置文件加载MCP服务器配置"""
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                if config_file.endswith('.yaml') or config_file.endswith('.yml'):
+                    config_data = yaml.safe_load(f)
+                else:
+                    config_data = json.load(f)
+            
+            # 支持两种格式：直接列表格式和包含servers字段的对象格式
+            if isinstance(config_data, list):
+                servers_config = MCPServersConfig(servers=[MCPServerConfig(**server) for server in config_data])
+            elif isinstance(config_data, dict) and 'servers' in config_data:
+                servers_config = MCPServersConfig(servers=[MCPServerConfig(**server) for server in config_data['servers']])
+            else:
+                # 尝试直接作为单个服务器配置
+                servers_config = MCPServersConfig(servers=[MCPServerConfig(**config_data)])
+            
+            # 添加所有服务器配置
+            for server_config in servers_config.servers:
+                self.add_server(server_config)
+                
+            print(f"✅ 成功加载配置文件: {config_file}, 共 {len(servers_config.servers)} 个MCP服务器")
+        except Exception as e:
+            print(f"❌ 加载配置文件失败: {e}")
+            raise
 
     def add_server(self, config: MCPServerConfig):
         self.servers[config.name] = config
@@ -69,7 +84,7 @@ class MCPAggregator:
                 "id": self._next_id(name),
                 "method": "initialize",
                 "params": {
-                    "clientInfo": {"name": "MCPAggregator", "version": "1.0.0"},
+                    "clientInfo": {"name": "MCPHub", "version": "1.0.0"},
                     "capabilities": {}
                 }
             }
@@ -109,8 +124,9 @@ class MCPAggregator:
         for tool in result_list:
             func = tool.get("function", {})
             tool_name = func.get("name")
+            func['name'] = f"{server_name}.{tool_name}"
             if tool_name:
-                self.tools[f"{server_name}.{tool_name}"] = ToolInfo(
+                self.tools[func['name']] = ToolInfo(
                     name=tool_name,
                     server_name=server_name,
                     schema=func
@@ -186,62 +202,3 @@ class MCPAggregator:
                             yield text
                     except Exception:
                         continue
-
-# ===================== FastAPI 聚合接口 =====================
-app = FastAPI(title="Streamable MCP Aggregator")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-aggregator = MCPAggregator()
-aggregator.add_server(MCPServerConfig(name="local", endpoint="http://localhost:8000/mcp"))
-
-@app.on_event("startup")
-async def startup_event():
-    await aggregator.connect_all()
-
-@app.get("/aggregate/servers")
-async def list_servers():
-    return [
-        {"name": name, "endpoint": s.endpoint, "healthy": aggregator.health_status.get(name, False)}
-        for name, s in aggregator.servers.items()
-    ]
-
-@app.get("/aggregate/tools")
-async def list_tools():
-    return [t.full_name for t in aggregator.tools.values()]
-
-@app.post("/aggregate/call")
-async def aggregate_call(req: Request):
-    body = await req.json()
-    tool_name = body.get("tool")
-    arguments = body.get("arguments", {})
-    result = await aggregator.call_tool(tool_name, arguments)
-    return JSONResponse(result)
-
-@app.post("/aggregate/call_stream")
-async def aggregate_call_stream(req: Request):
-    body = await req.json()
-    tool_name = body.get("tool")
-    arguments = body.get("arguments", {})
-
-    async def event_generator():
-        async for chunk in aggregator.call_tool_stream(tool_name, arguments):
-            yield f"data: {chunk}\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
-@app.get("/aggregate/health")
-async def aggregate_health():
-    return {"servers": aggregator.health_status}
-
-# ===================== 启动 =====================
-if __name__ == "__main__":
-    import uvicorn
-    print(f"""
-    🚀 {aggregator} 启动中...
-
-    📡 API 文档: http://localhost:9000/docs
-    📋 工具列表: http://localhost:9000/tools
-    🔧 调用工具: POST http://localhost:9000/tools/call
-
-    """)
-    uvicorn.run(app, host="0.0.0.0", port=9000)
