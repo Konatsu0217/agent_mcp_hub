@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from mcp_server_example.mcp_server_stub import MCPServer, Parameter
+from mcp_server import MCPServer, Parameter
 
 # ===================== 创建 MCP 实例 =====================
 mcp = MCPServer(name="Example MCP Server")

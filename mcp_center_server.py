@@ -52,7 +52,7 @@ async def list_servers():
 
 @app.get("/mcp_hub/tools")
 async def list_tools():
-    return [t.schema for t in hub.tools.values()]
+    return {"tools": [t.schema for t in hub.tools.values()]}
 
 @app.post("/mcp_hub/call")
 async def hub_call(req: Request):

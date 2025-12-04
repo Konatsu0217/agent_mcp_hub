@@ -124,12 +124,19 @@ class MCPHub:
         for tool in result_list:
             func = tool.get("function", {})
             tool_name = func.get("name")
-            func['name'] = f"{server_name}.{tool_name}"
             if tool_name:
-                self.tools[func['name']] = ToolInfo(
+                # 构建符合 OpenAPI 标准的 schema 格式
+                openapi_schema = {
+                    "type": "function",
+                    "function": func.copy()  # 复制原始 function 对象
+                }
+                # 修改 function 内部的 name 为完整名称
+                openapi_schema["function"]["name"] = f"{server_name}.{tool_name}"
+                
+                self.tools[f"{server_name}.{tool_name}"] = ToolInfo(
                     name=tool_name,
                     server_name=server_name,
-                    schema=func
+                    schema=openapi_schema
                 )
 
     async def call_tool(self, full_tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
