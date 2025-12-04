@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 
 from mcp_hub import MCPHub
-from model import MCPServerConfig
+from model import MCPServerConfig, MCPToolCallRequest
 
 # ===================== MCPHub FastAPI 接口 =====================
 app = FastAPI(title="MCPHub - MCP智能枢纽", description="🚀 统一管理和调用多个MCP服务器的智能枢纽")
@@ -55,18 +55,16 @@ async def list_tools():
     return {"tools": [t.schema for t in hub.tools.values()]}
 
 @app.post("/mcp_hub/call")
-async def hub_call(req: Request):
-    body = await req.json()
-    tool_name = body.get("tool")
-    arguments = body.get("arguments", {})
+async def hub_call(data: MCPToolCallRequest):
+    tool_name = data.function.get("name")
+    arguments = data.function.get("arguments", {})
     result = await hub.call_tool(tool_name, arguments)
     return JSONResponse(result)
 
 @app.post("/mcp_hub/call_stream")
-async def hub_call_stream(req: Request):
-    body = await req.json()
-    tool_name = body.get("tool")
-    arguments = body.get("arguments", {})
+async def hub_call_stream(data: MCPToolCallRequest):
+    tool_name = data.function.get("name")
+    arguments = data.function.get("arguments", {})
 
     async def event_generator():
         async for chunk in hub.call_tool_stream(tool_name, arguments):

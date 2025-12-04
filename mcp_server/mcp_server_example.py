@@ -15,6 +15,24 @@ mcp = MCPServer(name="Example MCP Server")
 def echo(message: str) -> str:
     return message
 
+@mcp.tool(
+    name="get_weather",
+    description="查询天气",
+    parameters=[
+        Parameter("city", "string", "要查询天气的城市"),
+        Parameter("date", "string", "要查询的日期"),
+    ]
+)
+def get_weather(city: str, date: str) -> str:
+    if city == "北京":
+        return f"北京在 {date} 是晴天"
+    elif city == "上海":
+        return f"上海在 {date} 是多云"
+    elif city == "广州":
+        return f"广州在 {date} 是阴云"
+    else:
+        return f"天气信息: {city} 在 {date}"
+
 @mcp.tool(name="add", description="加法运算")
 def add(a: float, b: float) -> float:
     return a + b

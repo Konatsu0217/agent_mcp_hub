@@ -25,3 +25,19 @@ class ToolInfo:
 class MCPServersConfig:
     """MCP服务器配置列表"""
     servers: List[MCPServerConfig] = field(default_factory=list)
+
+
+
+  # {
+  #   "id": "call_123",                     // 调用 ID，用于工具返回时对齐
+  #   "type": "function",                  // 目前基本固定是 function
+  #   "function": {
+  #     "name": "search_user",            // 工具名（必须匹配 tools[...] 里定义的 name）
+  #     "arguments": "{\"query\":\"abc\"}" // JSON 字符串！不是 dict！
+  #   }
+  # }
+@dataclass
+class MCPToolCallRequest:
+    id: str
+    type: str = "function"
+    function: Dict[str, Any] = field(default_factory=dict)
