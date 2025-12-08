@@ -4,8 +4,12 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 
+import global_statics
 from mcp_hub import MCPHub
 from model import MCPServerConfig, MCPToolCallRequest
+from utils.config_manager import ConfigManager
+
+mcp_config = ConfigManager().get_service_config("mcphub")
 
 # ===================== MCPHub FastAPI 接口 =====================
 app = FastAPI(title="MCPHub - MCP智能枢纽", description="🚀 统一管理和调用多个MCP服务器的智能枢纽")
@@ -82,13 +86,13 @@ if __name__ == "__main__":
     print(f"""
     🚀 MCPHub 启动中...
 
-    📡 API 文档: http://localhost:9000/docs
-    📋 服务器列表: http://localhost:9000/mcp_hub/servers
-    🔧 工具列表: http://localhost:9000/mcp_hub/tools
-    💓 健康检查: http://localhost:9000/mcp_hub/health
+    📡 API 文档: http://localhost:{mcp_config.get("port")}/docs
+    📋 服务器列表: http://localhost:{mcp_config.get("port")}/mcp_hub/servers
+    🔧 工具列表: http://localhost:{mcp_config.get("port")}/mcp_hub/tools
+    💓 健康检查: http://localhost:{mcp_config.get("port")}/mcp_hub/health
     
-    🔗 调用工具: POST http://localhost:9000/mcp_hub/call
-    ⚡ 流式调用: POST http://localhost:9000/mcp_hub/call_stream
+    🔗 调用工具: POST http://localhost:{mcp_config.get("port")}/mcp_hub/call
+    ⚡ 流式调用: POST http://localhost:{mcp_config.get("port")}/mcp_hub/call_stream
 
     """)
-    uvicorn.run(app, host="0.0.0.0", port=9000)
+    uvicorn.run(app, host="0.0.0.0", port=mcp_config.get("port"))

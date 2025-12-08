@@ -10,4 +10,4 @@ test_*.py
 
 *.txt
 
-log/
+logs/
