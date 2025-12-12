@@ -11,6 +11,13 @@ from mcp_server import MCPServer, Parameter
 # ===================== 创建 MCP 实例 =====================
 mcp = MCPServer(name="Example MCP Server")
 
+'''
+1. 创建MCPServer实例
+2. 用 @mcp.tool 声明可以被发现的工具
+3. 创建FastAPI应用实例，配置URL，记得填到外面那个 [mcp_servers_config.json] 当中
+4. 运行你写好的mcpServer服务，[/mcp]接口方法可以直接copy，不用管
+'''
+
 @mcp.tool(name="echo", description="回显消息")
 def echo(message: str) -> str:
     return message
@@ -106,5 +113,5 @@ async def health():
 # ===================== 启动服务器 =====================
 if __name__ == "__main__":
     import uvicorn
-    print(f"🚀 {mcp.name} 启动中, Streamable HTTP MCP 协议启用...")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print(f"🚀 {mcp.name} 启动中, Streamable HTTP MCP 协议启用...端口：8000")
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="error")

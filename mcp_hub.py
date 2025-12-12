@@ -14,7 +14,10 @@ MCPHub - Streamable MCP 智能枢纽
 """
 
 import json
-import yaml
+try:
+    import yaml  # 可选
+except Exception:
+    yaml = None
 from typing import Any, Dict, AsyncGenerator
 
 import httpx
@@ -38,7 +41,9 @@ class MCPHub:
         """从配置文件加载MCP服务器配置"""
         try:
             with open(config_file, 'r', encoding='utf-8') as f:
-                if config_file.endswith('.yaml') or config_file.endswith('.yml'):
+                if (config_file.endswith('.yaml') or config_file.endswith('.yml')):
+                    if yaml is None:
+                        raise ImportError("需要PyYAML来解析YAML配置文件，请安装 'pyyaml' 或改用JSON配置")
                     config_data = yaml.safe_load(f)
                 else:
                     config_data = json.load(f)

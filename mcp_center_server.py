@@ -1,14 +1,42 @@
 import argparse
 import os
+import sys
+from pathlib import Path
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 
+# 保证项目根目录在路径上
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
 from mcp_hub import MCPHub
 from model import MCPServerConfig, MCPToolCallRequest
+from utils.config_manager import ConfigManager
+
+mcp_config = ConfigManager().get_service_config("mcphub")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """
+    应用生命周期管理
+    """
+    print("应用启动中...")
+    await hub.connect_all()
+
+    yield  # 这里应用运行
+
+    # 关闭时执行的代码（相当于原来的 shutdown）
+    print("应用关闭中...")
+
 
 # ===================== MCPHub FastAPI 接口 =====================
-app = FastAPI(title="MCPHub - MCP智能枢纽", description="🚀 统一管理和调用多个MCP服务器的智能枢纽")
+app = FastAPI(title="MCPHub - MCP智能枢纽", description="🚀 统一管理和调用多个MCP服务器的智能枢纽", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # 支持通过命令行参数或环境变量指定配置文件
@@ -24,7 +52,12 @@ def get_config_file():
         return config_file
     
     # 尝试默认配置文件
-    default_configs = ["mcp_servers.yaml", "mcp_servers.json", "config/mcp_servers.yaml", "config/mcp_servers.json"]
+    default_configs = [
+        "mcp_servers.yaml",
+        "mcp_servers.json",
+        "config/mcp_servers.yaml",
+        "config/mcp_servers.json"
+    ]
     for default_config in default_configs:
         if os.path.exists(default_config):
             return default_config
@@ -38,10 +71,6 @@ hub = MCPHub(config_file=config_file)
 if not config_file:
     print("⚠️  未找到配置文件，使用默认的本地MCP服务器配置")
     hub.add_server(MCPServerConfig(name="local", endpoint="http://localhost:8000/mcp"))
-
-@app.on_event("startup")
-async def startup_event():
-    await hub.connect_all()
 
 @app.get("/mcp_hub/servers")
 async def list_servers():
@@ -79,16 +108,17 @@ async def hub_health():
 # ===================== 启动 =====================
 if __name__ == "__main__":
     import uvicorn
-    print(f"""
-    🚀 MCPHub 启动中...
-
-    📡 API 文档: http://localhost:9000/docs
-    📋 服务器列表: http://localhost:9000/mcp_hub/servers
-    🔧 工具列表: http://localhost:9000/mcp_hub/tools
-    💓 健康检查: http://localhost:9000/mcp_hub/health
-    
-    🔗 调用工具: POST http://localhost:9000/mcp_hub/call
-    ⚡ 流式调用: POST http://localhost:9000/mcp_hub/call_stream
-
-    """)
-    uvicorn.run(app, host="0.0.0.0", port=9000)
+    # print(f"""
+    # 🚀 MCPHub 启动中...
+    #
+    # 📡 API 文档: http://localhost:{mcp_config.get("port")}/docs
+    # 📋 服务器列表: http://localhost:{mcp_config.get("port")}/mcp_hub/servers
+    # 🔧 工具列表: http://localhost:{mcp_config.get("port")}/mcp_hub/tools
+    # 💓 健康检查: http://localhost:{mcp_config.get("port")}/mcp_hub/health
+    #
+    # 🔗 调用工具: POST http://localhost:{mcp_config.get("port")}/mcp_hub/call
+    # ⚡ 流式调用: POST http://localhost:{mcp_config.get("port")}/mcp_hub/call_stream
+    #
+    # """)
+    uvicorn.run(app, host="0.0.0.0", port=mcp_config.get("port"),
+                log_level="error")

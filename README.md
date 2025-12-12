@@ -153,7 +153,7 @@ servers:
 ### 命令行参数
 ```bash
 python mcp_center_server.py --config config.yaml
-python mcp_center_server.py -c config.json
+python mcp_center_server.py -c pe_config.json
 ```
 
 ### 环境变量
