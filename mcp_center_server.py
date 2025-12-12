@@ -1,11 +1,18 @@
 import argparse
 import os
+import sys
+from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
+
+# 保证项目根目录在路径上
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
 from mcp_hub import MCPHub
 from model import MCPServerConfig, MCPToolCallRequest
@@ -45,7 +52,12 @@ def get_config_file():
         return config_file
     
     # 尝试默认配置文件
-    default_configs = ["mcp_servers.yaml", "mcp_servers_config.json", "config/mcp_servers.yaml", "config/mcp_servers_config.json"]
+    default_configs = [
+        "mcp_servers.yaml",
+        "mcp_servers.json",
+        "config/mcp_servers.yaml",
+        "config/mcp_servers.json"
+    ]
     for default_config in default_configs:
         if os.path.exists(default_config):
             return default_config
