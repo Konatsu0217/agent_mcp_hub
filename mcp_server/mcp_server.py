@@ -100,3 +100,49 @@ class MCPServer:
 
     def tools_list(self):
         return self.list_tools()
+
+    # @mcp.tool(name="echo", description="回显消息")
+    # def echo(message: str) -> str:
+    #     return message
+    #
+    # @mcp.tool(
+    #     name="get_weather",
+    #     description="查询天气",
+    #     parameters=[
+    #         Parameter("city", "string", "要查询天气的城市"),
+    #         Parameter("date", "string", "要查询的日期"),
+    #     ]
+    # )
+    # def get_weather(city: str, date: str) -> str:
+    #     if city == "北京":
+    #         return f"北京在 {date} 是晴天"
+    #     elif city == "上海":
+    #         return f"上海在 {date} 是多云"
+    #     elif city == "广州":
+    #         return f"广州在 {date} 是阴云"
+    #     else:
+    #         return f"天气信息: {city} 在 {date}"
+    #
+    # @mcp.tool(name="add", description="加法运算")
+    # def add(a: float, b: float) -> float:
+    #     return a + b
+    #
+    # @mcp.tool(name="count_stream", description="计数流")
+    # async def count_stream(n: int):
+    #     for i in range(1, n + 1):
+    #         await asyncio.sleep(1)
+    #         yield {"count": i}
+    #
+    #
+    # @mcp.tool(
+    #     name="search_files",
+    #     description="在目录中搜索文件",
+    #     parameters=[
+    #         Parameter("directory", "string", "搜索的目录路径"),
+    #         Parameter("pattern", "string", "文件名匹配模式 (支持通配符)"),
+    #         Parameter("recursive", "boolean", "是否递归搜索子目录", required=False),
+    #         Parameter("max_results", "integer", "最大返回结果数", required=False)
+    #     ]
+    # )
+    # def search_files(directory: str, pattern: str, recursive: bool = False, max_results: int = 100):
+    #     return {"success": True, "result": f"Searching {directory} for {pattern}"}
