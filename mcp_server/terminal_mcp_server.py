@@ -54,6 +54,56 @@ warning_commands = [
 ]
 
 import re
+import time
+import os
+
+def record_command_history(command: str, success: bool, returncode: int, stdout: str, stderr: str, safety_assessment: Dict[str, Any], working_directory: str):
+    """记录命令执行历史到文件
+    
+    Args:
+        command: 执行的命令
+        success: 命令是否执行成功
+        returncode: 命令返回码
+        stdout: 标准输出
+        stderr: 标准错误
+        safety_assessment: 命令安全评估结果
+        working_directory: 命令执行的工作目录
+    """
+    history_file = "command_history.json"
+    
+    # 读取现有历史记录
+    history = []
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+        except Exception:
+            # 如果文件损坏，创建新的历史记录
+            history = []
+    
+    # 创建新的命令记录
+    command_record = {
+        "timestamp": time.time(),
+        "command": command,
+        "success": success,
+        "returncode": returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "safety_level": safety_assessment.get("level_name", "UNKNOWN"),
+        "working_directory": working_directory,
+        "executed_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    }
+    
+    # 追加新记录
+    history.append(command_record)
+    
+    # 写入历史记录文件
+    try:
+        with open(history_file, 'w', encoding='utf-8') as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception:
+        # 忽略文件写入错误，不影响命令执行
+        pass
 
 def assess_command_safety(command: str) -> Dict[str, Any]:
     """评估命令安全等级
@@ -81,7 +131,7 @@ def assess_command_safety(command: str) -> Dict[str, Any]:
                 "level": SAFETY_LEVELS["WARNING"],
                 "level_name": "WARNING",
                 "reason": f"Command matches warning pattern: {pattern}",
-                "requires_approval": False
+                "requires_approval": True
             }
     
     # 默认安全命令
@@ -98,6 +148,7 @@ class TerminalMCPServer:
         self.name = name
         self.tools = {}
         self.schemas = {}
+        self.working_directory = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))  # 默认项目根目录
         self._register_tools()
     
     def _register_tools(self):
@@ -183,6 +234,12 @@ class TerminalMCPServer:
     
     def initialize(self, client_info=None, capabilities=None):
         """初始化MCP服务器"""
+        # 从client_info中获取工作目录
+        if client_info and isinstance(client_info, dict):
+            custom_working_dir = client_info.get("working_directory")
+            if custom_working_dir and os.path.exists(custom_working_dir):
+                self.working_directory = os.path.abspath(custom_working_dir)
+        
         return {
             "protocolVersion": "2024-11-05",
             "serverName": self.name,
@@ -215,7 +272,19 @@ class TerminalMCPServer:
                 shell=True, 
                 capture_output=True, 
                 text=True, 
-                timeout=timeout
+                timeout=timeout,
+                cwd=self.working_directory
+            )
+            
+            # 记录命令历史
+            record_command_history(
+                command=command,
+                success=True,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                safety_assessment=safety_assessment,
+                working_directory=self.working_directory
             )
             
             return {
@@ -230,6 +299,17 @@ class TerminalMCPServer:
                 }
             }
         except subprocess.TimeoutExpired:
+            # 记录命令历史
+            record_command_history(
+                command=command,
+                success=False,
+                returncode=-1,
+                stdout="",
+                stderr=f"Command timed out after {timeout} seconds",
+                safety_assessment=safety_assessment,
+                working_directory=self.working_directory
+            )
+            
             return {
                 "success": False,
                 "status": "error",
@@ -238,6 +318,17 @@ class TerminalMCPServer:
                 "error_type": "TimeoutError"
             }
         except Exception as e:
+            # 记录命令历史
+            record_command_history(
+                command=command,
+                success=False,
+                returncode=-1,
+                stdout="",
+                stderr=str(e),
+                safety_assessment=safety_assessment,
+                working_directory=self.working_directory
+            )
+            
             return {
                 "success": False,
                 "status": "error",
@@ -265,6 +356,10 @@ class TerminalMCPServer:
             }
             return
         
+        stdout_output = []
+        stderr_output = []
+        returncode = -1
+        
         try:
             # 启动子进程
             process = subprocess.Popen(
@@ -273,12 +368,14 @@ class TerminalMCPServer:
                 stdout=subprocess.PIPE, 
                 stderr=subprocess.STDOUT,  # 合并 stderr 到 stdout
                 text=True,
-                bufsize=1  # 行缓冲
+                bufsize=1,  # 行缓冲
+                cwd=self.working_directory
             )
             
             # 实时读取输出
             for line in iter(process.stdout.readline, ''):
                 if line:
+                    stdout_output.append(line.strip())
                     yield {
                         "type": "stdout",
                         "data": line.strip(),
@@ -288,13 +385,24 @@ class TerminalMCPServer:
                     await asyncio.sleep(0.01)  # 让出控制权
             
             # 等待进程结束
-            process.wait(timeout=timeout)
+            returncode = process.wait(timeout=timeout)
+            
+            # 记录命令历史
+            record_command_history(
+                command=command,
+                success=True,
+                returncode=returncode,
+                stdout="\n".join(stdout_output),
+                stderr="",
+                safety_assessment=safety_assessment,
+                working_directory=self.working_directory
+            )
             
             # 输出最终状态
             yield {
                 "type": "result",
                 "data": {
-                    "returncode": process.returncode,
+                    "returncode": returncode,
                     "command": command,
                     "status": "completed",
                     "safety_assessment": safety_assessment
@@ -302,6 +410,17 @@ class TerminalMCPServer:
             }
             
         except subprocess.TimeoutExpired:
+            # 记录命令历史
+            record_command_history(
+                command=command,
+                success=False,
+                returncode=-1,
+                stdout="\n".join(stdout_output),
+                stderr=f"Command timed out after {timeout} seconds",
+                safety_assessment=safety_assessment,
+                working_directory=self.working_directory
+            )
+            
             yield {
                 "type": "error",
                 "data": {
@@ -312,6 +431,17 @@ class TerminalMCPServer:
                 }
             }
         except Exception as e:
+            # 记录命令历史
+            record_command_history(
+                command=command,
+                success=False,
+                returncode=-1,
+                stdout="\n".join(stdout_output),
+                stderr=str(e),
+                safety_assessment=safety_assessment,
+                working_directory=self.working_directory
+            )
+            
             yield {
                 "type": "error",
                 "data": {
@@ -324,6 +454,9 @@ class TerminalMCPServer:
     
     def approve_command(self, command: str, approval_id: str, timeout: int = 30) -> Dict[str, Any]:
         """批准并执行命令"""
+        # 评估命令安全等级
+        safety_assessment = assess_command_safety(command)
+        
         try:
             # 执行命令
             result = subprocess.run(
@@ -331,10 +464,20 @@ class TerminalMCPServer:
                 shell=True, 
                 capture_output=True, 
                 text=True, 
-                timeout=timeout
+                timeout=timeout,
+                cwd=self.working_directory
             )
 
-
+            # 记录命令历史
+            record_command_history(
+                command=command,
+                success=True,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                safety_assessment=safety_assessment,
+                working_directory=self.working_directory
+            )
             
             return {
                 "success": True,
@@ -348,6 +491,17 @@ class TerminalMCPServer:
                 }
             }
         except subprocess.TimeoutExpired:
+            # 记录命令历史
+            record_command_history(
+                command=command,
+                success=False,
+                returncode=-1,
+                stdout="",
+                stderr=f"Command timed out after {timeout} seconds",
+                safety_assessment=safety_assessment,
+                working_directory=self.working_directory
+            )
+            
             return {
                 "success": False,
                 "status": "error",
@@ -356,6 +510,17 @@ class TerminalMCPServer:
                 "error_type": "TimeoutError"
             }
         except Exception as e:
+            # 记录命令历史
+            record_command_history(
+                command=command,
+                success=False,
+                returncode=-1,
+                stdout="",
+                stderr=str(e),
+                safety_assessment=safety_assessment,
+                working_directory=self.working_directory
+            )
+            
             return {
                 "success": False,
                 "status": "error",
