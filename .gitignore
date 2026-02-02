@@ -11,3 +11,5 @@ test_*.py
 *.txt
 
 log/
+
+.trae

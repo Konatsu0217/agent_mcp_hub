@@ -61,6 +61,14 @@ async def hub_call(data: MCPToolCallRequest):
     result = await hub.call_tool(tool_name, arguments)
     return JSONResponse(result)
 
+@app.post("/mcp_hub/approve")
+async def hub_approve(data: dict):
+    tool_name = data.get("tool")
+    arguments = data.get("arguments", {})
+    approval_id = data.get("approval_id")
+    result = await hub.approve_tool(tool_name, arguments, approval_id)
+    return JSONResponse(result)
+
 @app.post("/mcp_hub/call_stream")
 async def hub_call_stream(data: MCPToolCallRequest):
     tool_name = data.function.get("name")

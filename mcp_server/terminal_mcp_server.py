@@ -7,6 +7,91 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from typing import AsyncGenerator, Dict, Any, Optional
 
+# 命令安全等级
+SAFETY_LEVELS = {
+    "SAFE": 0,      # 安全命令
+    "WARNING": 1,   # 警告命令
+    "DANGEROUS": 2  # 危险命令
+}
+
+# 危险命令模式
+dangerous_commands = [
+    r'rm\s+-rf',
+    r'sudo\s+',
+    r'format\s+',
+    r'dd\s+',
+    r'chmod\s+[0-7]{3}',
+    r'chown\s+',
+    r'kill\s+-9',
+    r'shutdown\s+',
+    r'reboot\s+',
+    r'init\s+',
+    r'mkfs\s+',
+    r'fsck\s+',
+    r'mount\s+',
+    r'umount\s+',
+    r'iptables\s+',
+    r'curl\s+.*>.*',
+    r'wget\s+.*>.*',
+    r'echo\s+.*>.*',
+    r'cat\s+.*>.*',
+    r'touch\s+/etc/.*',
+    r'rmdir\s+/.*',
+    r'mv\s+/.*',
+    r'cp\s+/.*',
+]
+
+# 警告命令模式
+warning_commands = [
+    r'rm\s+',
+    r'mkdir\s+-p\s+/.*',
+    r'cd\s+/.*',
+    r'ls\s+-la\s+/.*',
+    r'find\s+/.*',
+    r'grep\s+.*>/.*',
+    r'sort\s+.*>/.*',
+    r'uniq\s+.*>/.*',
+]
+
+import re
+
+def assess_command_safety(command: str) -> Dict[str, Any]:
+    """评估命令安全等级
+    
+    Args:
+        command: 要评估的命令
+        
+    Returns:
+        包含安全等级和评估信息的字典
+    """
+    # 检查危险命令
+    for pattern in dangerous_commands:
+        if re.search(pattern, command):
+            return {
+                "level": SAFETY_LEVELS["DANGEROUS"],
+                "level_name": "DANGEROUS",
+                "reason": f"Command matches dangerous pattern: {pattern}",
+                "requires_approval": True
+            }
+    
+    # 检查警告命令
+    for pattern in warning_commands:
+        if re.search(pattern, command):
+            return {
+                "level": SAFETY_LEVELS["WARNING"],
+                "level_name": "WARNING",
+                "reason": f"Command matches warning pattern: {pattern}",
+                "requires_approval": False
+            }
+    
+    # 默认安全命令
+    return {
+        "level": SAFETY_LEVELS["SAFE"],
+        "level_name": "SAFE",
+        "reason": "Command appears to be safe",
+        "requires_approval": False
+    }
+
 # ===================== Terminal MCP服务器 =====================
 class TerminalMCPServer:
     def __init__(self, name="Terminal MCP Server"):
@@ -66,6 +151,35 @@ class TerminalMCPServer:
                 }
             }
         }
+        
+        # 注册命令批准工具
+        self.tools["approve_command"] = self.approve_command
+        self.schemas["approve_command"] = {
+            "type": "function",
+            "function": {
+                "name": "approve_command",
+                "description": "批准并执行需要审批的命令",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "要执行的终端命令"
+                        },
+                        "approval_id": {
+                            "type": "string",
+                            "description": "审批ID"
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "命令执行超时时间（秒），默认30秒",
+                            "default": 30
+                        }
+                    },
+                    "required": ["command", "approval_id"]
+                }
+            }
+        }
     
     def initialize(self, client_info=None, capabilities=None):
         """初始化MCP服务器"""
@@ -81,6 +195,19 @@ class TerminalMCPServer:
     
     def execute_command(self, command: str, timeout: int = 30) -> Dict[str, Any]:
         """执行终端命令并返回结果"""
+        # 评估命令安全等级
+        safety_assessment = assess_command_safety(command)
+        
+        # 对于危险命令，返回pending状态
+        if safety_assessment["requires_approval"]:
+            return {
+                "success": False,
+                "status": "pending",
+                "safety_assessment": safety_assessment,
+                "message": "Command requires approval before execution",
+                "command": command
+            }
+        
         try:
             # 执行命令
             result = subprocess.run(
@@ -93,6 +220,8 @@ class TerminalMCPServer:
             
             return {
                 "success": True,
+                "status": "completed",
+                "safety_assessment": safety_assessment,
                 "result": {
                     "stdout": result.stdout,
                     "stderr": result.stderr,
@@ -103,18 +232,39 @@ class TerminalMCPServer:
         except subprocess.TimeoutExpired:
             return {
                 "success": False,
+                "status": "error",
+                "safety_assessment": safety_assessment,
                 "error": f"Command timed out after {timeout} seconds",
                 "error_type": "TimeoutError"
             }
         except Exception as e:
             return {
                 "success": False,
+                "status": "error",
+                "safety_assessment": safety_assessment,
                 "error": str(e),
                 "error_type": type(e).__name__
             }
     
     async def execute_command_stream(self, command: str, timeout: int = 60) -> AsyncGenerator[Dict[str, Any], None]:
         """流式执行终端命令并实时返回结果"""
+        # 评估命令安全等级
+        safety_assessment = assess_command_safety(command)
+        
+        # 对于危险命令，返回pending状态
+        if safety_assessment["requires_approval"]:
+            yield {
+                "type": "pending",
+                "data": {
+                    "success": False,
+                    "status": "pending",
+                    "safety_assessment": safety_assessment,
+                    "message": "Command requires approval before execution",
+                    "command": command
+                }
+            }
+            return
+        
         try:
             # 启动子进程
             process = subprocess.Popen(
@@ -132,7 +282,8 @@ class TerminalMCPServer:
                     yield {
                         "type": "stdout",
                         "data": line.strip(),
-                        "command": command
+                        "command": command,
+                        "safety_assessment": safety_assessment
                     }
                     await asyncio.sleep(0.01)  # 让出控制权
             
@@ -145,7 +296,8 @@ class TerminalMCPServer:
                 "data": {
                     "returncode": process.returncode,
                     "command": command,
-                    "status": "completed"
+                    "status": "completed",
+                    "safety_assessment": safety_assessment
                 }
             }
             
@@ -155,7 +307,8 @@ class TerminalMCPServer:
                 "data": {
                     "error": f"Command timed out after {timeout} seconds",
                     "error_type": "TimeoutError",
-                    "command": command
+                    "command": command,
+                    "safety_assessment": safety_assessment
                 }
             }
         except Exception as e:
@@ -164,8 +317,51 @@ class TerminalMCPServer:
                 "data": {
                     "error": str(e),
                     "error_type": type(e).__name__,
+                    "command": command,
+                    "safety_assessment": safety_assessment
+                }
+            }
+    
+    def approve_command(self, command: str, approval_id: str, timeout: int = 30) -> Dict[str, Any]:
+        """批准并执行命令"""
+        try:
+            # 执行命令
+            result = subprocess.run(
+                command, 
+                shell=True, 
+                capture_output=True, 
+                text=True, 
+                timeout=timeout
+            )
+
+
+            
+            return {
+                "success": True,
+                "status": "completed",
+                "approval_id": approval_id,
+                "result": {
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "returncode": result.returncode,
                     "command": command
                 }
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "status": "error",
+                "approval_id": approval_id,
+                "error": f"Command timed out after {timeout} seconds",
+                "error_type": "TimeoutError"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "status": "error",
+                "approval_id": approval_id,
+                "error": str(e),
+                "error_type": type(e).__name__
             }
 
 # ===================== 创建MCP实例 =====================
@@ -250,6 +446,37 @@ async def mcp_endpoint(req: Request):
                     }, ensure_ascii=False) + "\n"
             
             return StreamingResponse(stream_response(), media_type="application/json")
+        
+        elif method == "tools/approve":
+            tool_name = params.get("name", "approve_command")
+            arguments = params.get("arguments", {})
+            approval_id = params.get("approval_id", str(hash(str(arguments))))
+            
+            # 构建批准命令的参数
+            approve_args = {
+                "command": arguments.get("command"),
+                "approval_id": approval_id,
+                "timeout": arguments.get("timeout", 30)
+            }
+            
+            if not approve_args["command"]:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": payload.get("id"),
+                    "error": {
+                        "code": -32602,
+                        "message": "Command is required for approval"
+                    }
+                }
+            
+            # 调用批准命令工具
+            result = mcp.tools["approve_command"](**approve_args)
+            
+            return {
+                "jsonrpc": "2.0",
+                "id": payload.get("id"),
+                "result": result
+            }
         
         else:
             return {

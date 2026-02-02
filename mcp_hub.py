@@ -224,6 +224,61 @@ class MCPHub:
                     return {"success": False, "error": error_message}
                 # 处理成功响应
                 elif "result" in data:
+                    result = data["result"]
+                    # 处理pending状态
+                    if isinstance(result, dict) and result.get("status") == "pending":
+                        return {
+                            "success": False,
+                            "status": "pending",
+                            "data": result
+                        }
+                    return {"success": True, "result": result}
+            # 兼容非标准响应
+            return {"success": True, "result": data}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    async def approve_tool(self, full_tool_name: str, arguments: Dict[str, Any], approval_id: str) -> Dict[str, Any]:
+        """批准工具执行"""
+        if full_tool_name not in self.tools:
+            return {"success": False, "error": f"工具 {full_tool_name} 不存在"}
+
+        tool = self.tools[full_tool_name]
+        server_name = tool.server_name
+        if not self.health_status.get(server_name, False):
+            return {"success": False, "error": f"服务器 {server_name} 不可用"}
+
+        client = self.clients[server_name]
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self._next_id(server_name),
+            "method": "tools/approve",
+            "params": {
+                "name": tool.name,
+                "arguments": arguments,
+                "approval_id": approval_id
+            }
+        }
+
+        try:
+            resp = await client.post(self.servers[server_name].endpoint, json=payload)
+            resp.raise_for_status()
+            # Streamable MCP 也可能返回列表或字典
+            try:
+                data = resp.json()
+            except Exception:
+                text = await resp.aread()
+                data = json.loads(text.decode())
+            
+            # 标准JSON-RPC响应处理
+            if isinstance(data, dict):
+                # 处理错误响应
+                if "error" in data:
+                    error_info = data["error"]
+                    error_message = error_info.get("message", str(error_info)) if isinstance(error_info, dict) else str(error_info)
+                    return {"success": False, "error": error_message}
+                # 处理成功响应
+                elif "result" in data:
                     return {"success": True, "result": data["result"]}
             # 兼容非标准响应
             return {"success": True, "result": data}
