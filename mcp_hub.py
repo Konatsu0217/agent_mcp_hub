@@ -90,54 +90,99 @@ class MCPHub:
             }
             resp = await client.post(config.endpoint, json=payload)
             resp.raise_for_status()
+            
+            # 处理响应
+            try:
+                init_data = resp.json()
+                # 检查是否为错误响应
+                if isinstance(init_data, dict) and "error" in init_data:
+                    error_info = init_data["error"]
+                    error_message = error_info.get("message", str(error_info)) if isinstance(error_info, dict) else str(error_info)
+                    raise Exception(f"初始化失败: {error_message}")
+            except json.JSONDecodeError as e:
+                raise Exception(f"响应解析失败: {str(e)}")
+            
             self.clients[name] = client
             self.health_status[name] = True
-            await self._discover_tools(name, config, client)
+            # 尝试从initialize响应中提取工具信息
+            tools_from_init = []
+            if isinstance(init_data, dict) and "result" in init_data:
+                result = init_data["result"]
+                if isinstance(result, dict) and "tools" in result:
+                    tools_from_init = result["tools"]
+            # 调用工具发现方法
+            await self._discover_tools(name, config, client, tools_from_init)
             print(f"✅ 服务器 {name} 连接成功")
         except Exception as e:
             self.health_status[name] = False
             await client.aclose()
             print(f"❌ 服务器 {name} 连接失败: {e}")
 
-    async def _discover_tools(self, server_name: str, config: MCPServerConfig, client: httpx.AsyncClient):
-        payload = {
-            "jsonrpc": "2.0",
-            "id": self._next_id(server_name),
-            "method": "tools/list",
-            "params": {}
-        }
-        resp = await client.post(config.endpoint, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+    async def _discover_tools(self, server_name: str, config: MCPServerConfig, client: httpx.AsyncClient, tools_from_init: list = None):
+        # 首先使用从initialize响应中获取的工具信息
+        if tools_from_init and len(tools_from_init) > 0:
+            self._process_tool_list(server_name, tools_from_init)
+            print(f"✅ 从initialize响应中发现 {len(tools_from_init)} 个工具")
+            return
+        
+        # 如果没有从initialize获取到工具，则调用tools/list方法
+        try:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": self._next_id(server_name),
+                "method": "tools/list",
+                "params": {}
+            }
+            resp = await client.post(config.endpoint, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
 
-        # 兼容返回 result 是列表或字典
-        result_list = []
-        if isinstance(data, dict):
-            result = data.get("result", [])
-            if isinstance(result, list):
-                result_list = result
-            elif isinstance(result, dict) and "tools" in result:
-                result_list = result["tools"]
-        elif isinstance(data, list):
-            result_list = data
+            # 兼容返回 result 是列表或字典
+            result_list = []
+            if isinstance(data, dict):
+                result = data.get("result", [])
+                if isinstance(result, list):
+                    result_list = result
+                elif isinstance(result, dict) and "tools" in result:
+                    result_list = result["tools"]
+            elif isinstance(data, list):
+                result_list = data
 
-        for tool in result_list:
-            func = tool.get("function", {})
-            tool_name = func.get("name")
-            if tool_name:
-                # 构建符合 OpenAPI 标准的 schema 格式
-                openapi_schema = {
-                    "type": "function",
-                    "function": func.copy()  # 复制原始 function 对象
-                }
-                # 修改 function 内部的 name 为完整名称
-                openapi_schema["function"]["name"] = f"{server_name}.{tool_name}"
+            self._process_tool_list(server_name, result_list)
+            print(f"✅ 从tools/list发现 {len(result_list)} 个工具")
+        except Exception as e:
+            print(f"⚠️  工具发现失败: {e}")
+
+    def _process_tool_list(self, server_name: str, tools: list):
+        """处理工具列表，构建工具信息"""
+        for tool in tools:
+            # 处理标准MCP格式的工具定义
+            if isinstance(tool, dict):
+                # 情况1: 直接包含function字段
+                if "function" in tool:
+                    func = tool["function"]
+                    tool_name = func.get("name")
+                # 情况2: 直接是function对象
+                elif "name" in tool and "parameters" in tool:
+                    func = tool
+                    tool_name = func.get("name")
+                else:
+                    continue
                 
-                self.tools[f"{server_name}.{tool_name}"] = ToolInfo(
-                    name=tool_name,
-                    server_name=server_name,
-                    schema=openapi_schema
-                )
+                if tool_name:
+                    # 构建符合 OpenAPI 标准的 schema 格式
+                    openapi_schema = {
+                        "type": "function",
+                        "function": func.copy()  # 复制原始 function 对象
+                    }
+                    # 修改 function 内部的 name 为完整名称
+                    openapi_schema["function"]["name"] = f"{server_name}.{tool_name}"
+                    
+                    self.tools[f"{server_name}.{tool_name}"] = ToolInfo(
+                        name=tool_name,
+                        server_name=server_name,
+                        schema=openapi_schema
+                    )
 
     async def call_tool(self, full_tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """调用工具（同步结果）"""
@@ -169,11 +214,19 @@ class MCPHub:
             except Exception:
                 text = await resp.aread()
                 data = json.loads(text.decode())
-            # 提取结果
-            if isinstance(data, dict) and "result" in data:
-                return {"success": True, "result": data["result"]}
-            else:
-                return {"success": True, "result": data}
+            
+            # 标准JSON-RPC响应处理
+            if isinstance(data, dict):
+                # 处理错误响应
+                if "error" in data:
+                    error_info = data["error"]
+                    error_message = error_info.get("message", str(error_info)) if isinstance(error_info, dict) else str(error_info)
+                    return {"success": False, "error": error_message}
+                # 处理成功响应
+                elif "result" in data:
+                    return {"success": True, "result": data["result"]}
+            # 兼容非标准响应
+            return {"success": True, "result": data}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -200,12 +253,65 @@ class MCPHub:
             }
         }
 
-        async with client.stream("POST", self.servers[server_name].endpoint, json=payload) as resp:
-            async for chunk in resp.aiter_bytes():
-                if chunk:
+        try:
+            async with client.stream("POST", self.servers[server_name].endpoint, json=payload) as resp:
+                if resp.status_code != 200:
+                    error_msg = f"HTTP错误: {resp.status_code}"
+                    yield json.dumps({"success": False, "error": error_msg})
+                    return
+                
+                buffer = ""
+                async for chunk in resp.aiter_bytes():
+                    if chunk:
+                        try:
+                            text = chunk.decode("utf-8")
+                            buffer += text
+                            
+                            # 按行处理响应
+                            lines = buffer.split('\n')
+                            buffer = lines[-1]  # 保留最后不完整的行
+                            
+                            for line in lines[:-1]:
+                                line = line.strip()
+                                if line:
+                                    # 处理标准MCP流式响应格式
+                                    try:
+                                        chunk_data = json.loads(line)
+                                        # 检查是否为错误响应
+                                        if isinstance(chunk_data, dict):
+                                            if "error" in chunk_data:
+                                                error_info = chunk_data["error"]
+                                                error_message = error_info.get("message", str(error_info)) if isinstance(error_info, dict) else str(error_info)
+                                                yield json.dumps({"success": False, "error": error_message})
+                                                return
+                                            elif "result" in chunk_data:
+                                                # 标准JSON-RPC成功响应
+                                                yield json.dumps({"success": True, "result": chunk_data["result"]})
+                                            else:
+                                                # 其他格式的响应
+                                                yield line
+                                    except json.JSONDecodeError:
+                                        # 非JSON格式，直接返回
+                                        yield line
+                        except Exception as e:
+                            yield json.dumps({"success": False, "error": f"流式处理错误: {str(e)}"})
+                            return
+                
+                # 处理最后剩余的缓冲区内容
+                if buffer.strip():
                     try:
-                        text = chunk.decode("utf-8").strip()
-                        if text:
-                            yield text
-                    except Exception:
-                        continue
+                        chunk_data = json.loads(buffer)
+                        if isinstance(chunk_data, dict):
+                            if "error" in chunk_data:
+                                error_info = chunk_data["error"]
+                                error_message = error_info.get("message", str(error_info)) if isinstance(error_info, dict) else str(error_info)
+                                yield json.dumps({"success": False, "error": error_message})
+                            elif "result" in chunk_data:
+                                yield json.dumps({"success": True, "result": chunk_data["result"]})
+                            else:
+                                yield buffer
+                    except json.JSONDecodeError:
+                        yield buffer
+        except Exception as e:
+            yield json.dumps({"success": False, "error": str(e)})
+            return
