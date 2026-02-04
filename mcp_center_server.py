@@ -41,7 +41,7 @@ if not config_file:
 
 @app.on_event("startup")
 async def startup_event():
-    await hub.connect_all()
+    await hub.start_background_tasks(config_file=config_file)
 
 @app.get("/mcp_hub/servers")
 async def list_servers():
@@ -53,6 +53,11 @@ async def list_servers():
 @app.get("/mcp_hub/tools")
 async def list_tools():
     return {"tools": [t.schema for t in hub.tools.values()]}
+
+@app.post("/mcp_hub/refresh")
+async def refresh_hub():
+    await hub._reconcile_once()
+    return {"refreshed": True}
 
 @app.post("/mcp_hub/call")
 async def hub_call(data: MCPToolCallRequest):

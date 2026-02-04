@@ -16,6 +16,9 @@ MCPHub - Streamable MCP 智能枢纽
 import json
 import yaml
 from typing import Any, Dict, AsyncGenerator
+import asyncio
+import time
+import hashlib
 
 import httpx
 
@@ -30,6 +33,11 @@ class MCPHub:
         self.tools: Dict[str, ToolInfo] = {}
         self.health_status: Dict[str, bool] = {}
         self.request_ids: Dict[str, int] = {}
+        self._lock = asyncio.Lock()
+        self._config_file = config_file
+        self._bg_task = None
+        self._retry_info: Dict[str, Dict[str, Any]] = {}
+        self._last_config_hash = None
         
         if config_file:
             self.load_config(config_file)
@@ -75,6 +83,140 @@ class MCPHub:
         for name, config in self.servers.items():
             if config.enabled:
                 await self._connect_server(name, config)
+
+    async def start_background_tasks(self, config_file: str = None, interval: int = 300):
+        if config_file:
+            self._config_file = config_file
+        if self._bg_task is None:
+            self._bg_task = asyncio.create_task(self._reconcile_loop(interval))
+
+    async def _reconcile_loop(self, interval: int):
+        while True:
+            try:
+                await self._reconcile_once()
+            except Exception:
+                pass
+            await asyncio.sleep(interval)
+
+    def _load_config_snapshot(self) -> Dict[str, MCPServerConfig]:
+        snapshot: Dict[str, MCPServerConfig] = {}
+        if not self._config_file:
+            return snapshot
+        with open(self._config_file, 'r', encoding='utf-8') as f:
+            if self._config_file.endswith('.yaml') or self._config_file.endswith('.yml'):
+                data = yaml.safe_load(f)
+            else:
+                data = json.load(f)
+        if isinstance(data, list):
+            for s in data:
+                cfg = MCPServerConfig(**s)
+                snapshot[cfg.name] = cfg
+        elif isinstance(data, dict) and 'servers' in data:
+            for s in data['servers']:
+                cfg = MCPServerConfig(**s)
+                snapshot[cfg.name] = cfg
+        else:
+            cfg = MCPServerConfig(**data)
+            snapshot[cfg.name] = cfg
+        return snapshot
+
+    def _snapshot_hash(self, snap: Dict[str, MCPServerConfig]) -> str:
+        items = sorted([(n, c.endpoint, c.enabled, c.timeout) for n, c in snap.items()])
+        raw = json.dumps(items, ensure_ascii=False)
+        return hashlib.sha1(raw.encode('utf-8')).hexdigest()
+
+    async def _reconcile_once(self):
+        snap = self._load_config_snapshot()
+        snap_hash = self._snapshot_hash(snap)
+        current_names = set(self.servers.keys())
+        snap_names = set(snap.keys())
+        added = snap_names - current_names
+        removed = current_names - snap_names if self._config_file else set()
+        common = current_names & snap_names
+        changed = set()
+        for n in common:
+            c1 = self.servers[n]
+            c2 = snap[n]
+            if c1.endpoint != c2.endpoint or c1.enabled != c2.enabled or c1.timeout != c2.timeout:
+                changed.add(n)
+        if self._last_config_hash != snap_hash:
+            for n in added:
+                cfg = snap[n]
+                async with self._lock:
+                    self.add_server(cfg)
+                if cfg.enabled:
+                    await self._connect_server(n, cfg)
+            for n in removed:
+                await self._disconnect_server(n)
+            for n in changed:
+                cfg = snap[n]
+                if not cfg.enabled:
+                    await self._disconnect_server(n)
+                else:
+                    await self._disconnect_server(n)
+                    async with self._lock:
+                        self.servers[n] = cfg
+                    await self._connect_server(n, cfg)
+            self._last_config_hash = snap_hash
+        for n in list(self.servers.keys()):
+            if not self.servers[n].enabled:
+                continue
+            healthy = self.health_status.get(n, False)
+            if not healthy:
+                await self._reconnect_server(n)
+            else:
+                await self._ping_health(n)
+
+    async def _disconnect_server(self, name: str):
+        client = self.clients.get(name)
+        if client:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+        async with self._lock:
+            self.clients.pop(name, None)
+            self.health_status[name] = False
+            to_remove = [k for k, v in self.tools.items() if v.server_name == name]
+            for k in to_remove:
+                self.tools.pop(k, None)
+            self.servers.pop(name, None)
+            self.request_ids.pop(name, None)
+            self._retry_info.pop(name, None)
+
+    async def _reconnect_server(self, name: str):
+        cfg = self.servers.get(name)
+        if not cfg or not cfg.enabled:
+            return
+        info = self._retry_info.get(name, {"attempt": 0, "next": 0})
+        now = time.monotonic()
+        if now < info["next"]:
+            return
+        attempt = info["attempt"] + 1
+        delay = min(60, 2 ** min(attempt, 6))
+        try:
+            await self._connect_server(name, cfg)
+            self._retry_info[name] = {"attempt": 0, "next": 0}
+        except Exception:
+            self._retry_info[name] = {"attempt": attempt, "next": now + delay}
+
+    async def _ping_health(self, name: str):
+        client = self.clients.get(name)
+        cfg = self.servers.get(name)
+        if not client or not cfg:
+            return
+        url = None
+        if "/mcp" in cfg.endpoint:
+            base = cfg.endpoint.rsplit("/mcp", 1)[0]
+            url = base + "/health"
+        if not url:
+            return
+        try:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                self.health_status[name] = False
+        except Exception:
+            self.health_status[name] = False
 
     async def _connect_server(self, name: str, config: MCPServerConfig):
         client = httpx.AsyncClient(timeout=config.timeout)

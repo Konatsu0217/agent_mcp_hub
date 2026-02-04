@@ -39,6 +39,7 @@ dangerous_commands = [
     r'rmdir\s+/.*',
     r'mv\s+/.*',
     r'cp\s+/.*',
+    r'git\s+/.*',
 ]
 
 # 警告命令模式
