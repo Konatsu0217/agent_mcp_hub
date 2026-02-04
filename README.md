@@ -212,9 +212,7 @@ mcp_server_stub/
 ├── mcp_hub.py              # MCPHub核心类，聚合管理多个MCP服务器
 ├── mcp_center_server.py    # FastAPI服务，提供统一API接口
 ├── mcp_server/             # MCP服务器实现目录
-│   ├── mcp_server.py       # 基础MCP服务器，支持装饰器注册工具
-│   ├── mcp_server_example.py # 装饰器使用示例
-│   └── MCP_SERVER_GUIDE.md # MCP服务器开发指南
+│   └── mcp_server.py       # 基础MCP服务器，支持装饰器注册工具
 ├── model.py                # 数据模型定义
 ├── mcp_servers.yaml        # MCPHub配置文件（YAML格式）
 ├── mcp_servers.json        # MCPHub配置文件（JSON格式）
