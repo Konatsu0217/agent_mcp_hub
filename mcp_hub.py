@@ -14,7 +14,10 @@ MCPHub - Streamable MCP 智能枢纽
 """
 
 import json
-import yaml
+try:
+    import yaml  # 可选
+except Exception:
+    yaml = None
 from typing import Any, Dict, AsyncGenerator
 import asyncio
 import time
@@ -38,7 +41,7 @@ class MCPHub:
         self._bg_task = None
         self._retry_info: Dict[str, Dict[str, Any]] = {}
         self._last_config_hash = None
-        
+
         if config_file:
             self.load_config(config_file)
 
@@ -46,7 +49,9 @@ class MCPHub:
         """从配置文件加载MCP服务器配置"""
         try:
             with open(config_file, 'r', encoding='utf-8') as f:
-                if config_file.endswith('.yaml') or config_file.endswith('.yml'):
+                if (config_file.endswith('.yaml') or config_file.endswith('.yml')):
+                    if yaml is None:
+                        raise ImportError("需要PyYAML来解析YAML配置文件，请安装 'pyyaml' 或改用JSON配置")
                     config_data = yaml.safe_load(f)
                 else:
                     config_data = json.load(f)
@@ -232,7 +237,7 @@ class MCPHub:
             }
             resp = await client.post(config.endpoint, json=payload)
             resp.raise_for_status()
-            
+
             # 处理响应
             try:
                 init_data = resp.json()
@@ -243,7 +248,7 @@ class MCPHub:
                     raise Exception(f"初始化失败: {error_message}")
             except json.JSONDecodeError as e:
                 raise Exception(f"响应解析失败: {str(e)}")
-            
+
             self.clients[name] = client
             self.health_status[name] = True
             # 尝试从initialize响应中提取工具信息
@@ -266,7 +271,7 @@ class MCPHub:
             self._process_tool_list(server_name, tools_from_init)
             print(f"✅ 从initialize响应中发现 {len(tools_from_init)} 个工具")
             return
-        
+
         # 如果没有从initialize获取到工具，则调用tools/list方法
         try:
             payload = {
@@ -310,7 +315,7 @@ class MCPHub:
                     tool_name = func.get("name")
                 else:
                     continue
-                
+
                 if tool_name:
                     # 构建符合 OpenAPI 标准的 schema 格式
                     openapi_schema = {
@@ -319,7 +324,7 @@ class MCPHub:
                     }
                     # 修改 function 内部的 name 为完整名称
                     openapi_schema["function"]["name"] = f"{server_name}.{tool_name}"
-                    
+
                     self.tools[f"{server_name}.{tool_name}"] = ToolInfo(
                         name=tool_name,
                         server_name=server_name,
@@ -356,7 +361,7 @@ class MCPHub:
             except Exception:
                 text = await resp.aread()
                 data = json.loads(text.decode())
-            
+
             # 标准JSON-RPC响应处理
             if isinstance(data, dict):
                 # 处理错误响应
@@ -379,7 +384,7 @@ class MCPHub:
             return {"success": True, "result": data}
         except Exception as e:
             return {"success": False, "error": str(e)}
-    
+
     async def approve_tool(self, full_tool_name: str, arguments: Dict[str, Any], approval_id: str) -> Dict[str, Any]:
         """批准工具执行"""
         if full_tool_name not in self.tools:
@@ -411,7 +416,7 @@ class MCPHub:
             except Exception:
                 text = await resp.aread()
                 data = json.loads(text.decode())
-            
+
             # 标准JSON-RPC响应处理
             if isinstance(data, dict):
                 # 处理错误响应
@@ -456,18 +461,18 @@ class MCPHub:
                     error_msg = f"HTTP错误: {resp.status_code}"
                     yield json.dumps({"success": False, "error": error_msg})
                     return
-                
+
                 buffer = ""
                 async for chunk in resp.aiter_bytes():
                     if chunk:
                         try:
                             text = chunk.decode("utf-8")
                             buffer += text
-                            
+
                             # 按行处理响应
                             lines = buffer.split('\n')
                             buffer = lines[-1]  # 保留最后不完整的行
-                            
+
                             for line in lines[:-1]:
                                 line = line.strip()
                                 if line:
@@ -493,7 +498,7 @@ class MCPHub:
                         except Exception as e:
                             yield json.dumps({"success": False, "error": f"流式处理错误: {str(e)}"})
                             return
-                
+
                 # 处理最后剩余的缓冲区内容
                 if buffer.strip():
                     try:

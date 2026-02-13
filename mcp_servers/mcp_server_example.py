@@ -139,6 +139,16 @@ async def tavily_search_internal(
 
 
 # ===================== MCP 工具定义 =====================
+'''
+1. 创建MCPServer实例
+2. 用 @mcp.tool 声明可以被发现的工具
+3. 创建FastAPI应用实例，配置URL，记得填到外面那个 [mcp_servers_config.json] 当中
+4. 运行你写好的mcpServer服务，[/mcp]接口方法可以直接copy，不用管
+'''
+
+@mcp.tool(name="echo", description="回显消息")
+def echo(message: str) -> str:
+    return message
 
 @mcp.tool(
     name="get_weather",
