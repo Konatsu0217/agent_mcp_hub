@@ -51,7 +51,7 @@ servers:
 ### 2. 启动MCPHub
 
 ```bash
-python mcp_center_server.py --config mcp_servers.yaml
+python mcp_center_server.py --config mcp_server.yaml
 ```
 
 服务将在 http://localhost:9000 启动。

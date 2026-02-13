@@ -53,10 +53,10 @@ def get_config_file():
     
     # 尝试默认配置文件
     default_configs = [
-        "mcp_servers.yaml",
-        "mcp_servers.json",
-        "config/mcp_servers.yaml",
-        "config/mcp_servers.json"
+        "mcp_server.yaml",
+        "mcp_server.json",
+        "config/mcp_server.yaml",
+        "config/mcp_server.json"
     ]
     for default_config in default_configs:
         if os.path.exists(default_config):
