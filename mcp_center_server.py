@@ -72,6 +72,10 @@ if not config_file:
     print("⚠️  未找到配置文件，使用默认的本地MCP服务器配置")
     hub.add_server(MCPServerConfig(name="local", endpoint="http://localhost:8000/mcp"))
 
+@app.on_event("startup")
+async def startup_event():
+    await hub.start_background_tasks(config_file=config_file)
+
 @app.get("/mcp_hub/servers")
 async def list_servers():
     return [
@@ -83,11 +87,24 @@ async def list_servers():
 async def list_tools():
     return {"tools": [t.schema for t in hub.tools.values()]}
 
+@app.post("/mcp_hub/refresh")
+async def refresh_hub():
+    await hub._reconcile_once()
+    return {"refreshed": True}
+
 @app.post("/mcp_hub/call")
 async def hub_call(data: MCPToolCallRequest):
     tool_name = data.function.get("name")
     arguments = data.function.get("arguments", {})
     result = await hub.call_tool(tool_name, arguments)
+    return JSONResponse(result)
+
+@app.post("/mcp_hub/approve")
+async def hub_approve(data: dict):
+    tool_name = data.get("tool")
+    arguments = data.get("arguments", {})
+    approval_id = data.get("approval_id")
+    result = await hub.approve_tool(tool_name, arguments, approval_id)
     return JSONResponse(result)
 
 @app.post("/mcp_hub/call_stream")
